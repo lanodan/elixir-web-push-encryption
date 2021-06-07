@@ -81,20 +81,21 @@ defmodule WebPushEncryption.Encrypt do
     %{ciphertext: ciphertext, salt: salt, server_public_key: server_public_key}
   end
 
-  @compile {:no_warn_undefined, {:crypto, :hmac_init, 2}}
-  @compile {:no_warn_undefined, {:crypto, :hmac_update, 2}}
-  @compile {:no_warn_undefined, {:crypto, :hmac_final, 1}}
-  defp hkdf(salt, ikm, info, length) do
-    if @otp_version < 24 do
-      prk_hmac = :crypto.hmac_init(:sha256, salt)
-      prk_hmac = :crypto.hmac_update(prk_hmac, ikm)
-      prk = :crypto.hmac_final(prk_hmac)
+  if @otp_version < 23.3 do
+    defp hkdf(salt, ikm, info, length) do
+      prk =
+        :crypto.hmac_init(:sha256, salt)
+        |> :crypto.hmac_update(ikm)
+        |> :crypto.hmac_final()
 
-      info_hmac = :crypto.hmac_init(:sha256, prk)
-      info_hmac = :crypto.hmac_update(info_hmac, info)
-      info_hmac = :crypto.hmac_update(info_hmac, @one_buffer)
-      :crypto.hmac_final(info_hmac) |> :binary.part(0, length)
-    else
+      :crypto.hmac_init(:sha256, prk)
+      |> :crypto.hmac_update(info)
+      |> :crypto.hmac_update(@one_buffer)
+      |> :crypto.hmac_final()
+      |> :binary.part(0, length)
+    end
+  else
+    defp hkdf(salt, ikm, info, length) do
       prk =
         :crypto.mac_init(:hmac, :sha256, salt)
         |> :crypto.mac_update(ikm)
@@ -129,22 +130,27 @@ defmodule WebPushEncryption.Encrypt do
     "Content-Encoding: " <> type <> <<0>> <> "P-256" <> context
   end
 
-  @compile {:no_warn_undefined, {:crypto, :block_encrypt, 4}}
-  defp encrypt_payload(plaintext, content_encryption_key, nonce) do
-    {cipher_text, cipher_tag} =
-      if @otp_version < 24,
-        do: :crypto.block_encrypt(:aes_gcm, content_encryption_key, nonce, {"", plaintext}),
-        else:
-          :crypto.crypto_one_time_aead(
-            :aes_128_gcm,
-            content_encryption_key,
-            nonce,
-            plaintext,
-            "",
-            true
-          )
+  if @otp_version < 23.3 do
+    defp encrypt_payload(plaintext, content_encryption_key, nonce) do
+      {cipher_text, cipher_tag} =
+        :crypto.block_encrypt(:aes_gcm, content_encryption_key, nonce, {"", plaintext})
 
-    cipher_text <> cipher_tag
+      cipher_text <> cipher_tag
+    end
+  else
+    defp encrypt_payload(plaintext, content_encryption_key, nonce) do
+      {cipher_text, cipher_tag} =
+        :crypto.crypto_one_time_aead(
+          :aes_128_gcm,
+          content_encryption_key,
+          nonce,
+          plaintext,
+          "",
+          true
+        )
+
+      cipher_text <> cipher_tag
+    end
   end
 
   defp validate_subscription(%{keys: %{p256dh: p256dh, auth: auth}})
